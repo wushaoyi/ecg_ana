@@ -1,0 +1,97 @@
+1.使用wfdb包对MIT-BIH心电数据库里面的数据进行读取
+首先先在电脑python的目录下pip wfdb包
+在physionet官网下找到MIT-BIH心电数据库的下载页面，以下载109号记录为例（虽然开源项目有一些是下载整个数据库并进行分类的，但在学习阶段先下载部分以免混乱
+因开源项目中用不同的格式下载，所以本人就全部下载了（
+其次读取109号记录并显示出来
+代码与图像如下：
+部分代码为：
+# 导入心电信号处理函数库
+import wfdb
+# 导入python的类matlab绘图函数库
+import matplotlib.pyplot as plt
+# 读取本地的100号记录，从0到25000，读取模拟信号,通道0
+record = wfdb.rdrecord('109/109', sampfrom=0, sampto=25000, physical=True, channels=[0, ])
+# 读取，从第145个数据到第756个数据，随机选取
+ventricular_signal = record.p_signal[144:756]
+# 打印标题
+plt.title("ventricular signal")
+# 打印信号
+plt.plot(ventricular_signal)
+# 显示图像
+plt.show()
+（试着读取标注，因为wfdb包对ecg信号的处理很完备了，具体可见开发文档）
+# 读取第100条记录的annatation，前1000个点
+signal_annotation = wfdb.rdann("data/MIT-BIH/100", "atr", sampfrom=0, sampto=1000)
+# 打印标注信息（见关于wfdb包的开发文档）
+print("chan: " + str(signal_annotation.chan))
+print("sample: " + str(signal_annotation.sample))
+print("symbol: " + str(signal_annotation.symbol))
+print("aux_note: " + str(signal_annotation.aux_note))
+
+运行结果如下：
+record frequency：360
+signal shape: (3000,)
+chan: [0 0 0 0 0 0 0 0 0 0 0 0 0 0]
+sample: [  18  111  343  571  807 1048 1287 1523 1765 1994 2219 2435 2661 2883]
+symbol: ['+', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L']
+aux_note: ['(N\x00', '', '', '', '', '', '', '', '', '', '', '', '', '']
+
+2、进行基线漂移去噪
+ECG信号有三大噪声-基线漂移，工频干扰，肌电干扰
+基线漂移通俗的讲就是由于测量电极和人体自身呼吸的原因,会导致测出来的信号会有上下的抖动,这类抖动将难以定位ECG信号的特征点,使测出来的数据可用性降低
+接下来用中值滤波进行干扰的去除
+首先中值滤波是让每一个数,被包括他周围在内的数中的中位数代替
+部分代码：
+import wfdb
+import matplotlib.pyplot as plt
+from scipy.signal import medfilt
+fliter = int(0.8*360)
+fliter = int(0.8*360)这个东西就是我们要输入到中值滤波函数里的窗的大小
+那0.8和360这俩数又代表什么呢
+先说360，360这个数是因为MIT-BIH数据集每1秒采集360个信号也就是说如果滤波器如果一次对360个数据进行处理那就是作用在了1s的信息上对吧
+那为啥要成乘以0.8呢显而易见那就是处理了0.8秒的信息，因为人每次心跳差不多0.8秒一次，每个ECG信号（每一次心跳产生的信号）形状都差不多，
+也就是说一个周期内代表一个心电信号的所包含的样值点里，取中值应该差距不大
+所以，以一个心电信号的窗的大小在整个连续的心电信号图中不断平移对信号进行处理取中值处理的话，那如果信号没有上下抖动(基线漂移)
+那对由好几个单独的ECG信号组成的一个连续的信号中的每一个点，加窗，滤波，取得的中值所构成的线（基线，代表信号抖动程度都线），应该很平稳对不对，
+那如果差距大了说明这个信号抖了,有漂移了对不对，那我们只需要记录下对应点的漂移情况减去这个漂移的量，这不就把信号抻平了嘛
+
+
+Initial_intercept_point = 0
+Final_intercept_point = 2000
+ventricular_signal = record.d_signal[Initial_intercept_point:Final_intercept_point].flatten()
+ECG_baseline = medfilt(ventricular_signal,fliter+1)
+Totality_Bias = np.sum(ECG_baseline[Give_up_size:-Give_up_size])/(Final_intercept_point - Initial_intercept_point-fliter)
+Filtered_ECG = ventricular_signal - ECG_baseline
+Final_Filtered_ECG = Filtered_ECG[Give_up_size:-Give_up_size]-Totality_Bias
+print('signal shape: ' + str(ventricular_signal.shape))
+# 绘制波形
+
+plt.figure(figsize=(100, 8))
+plt.subplot(4, 1, 1)
+plt.ylabel("Original ECG signal")
+plt.plot(ventricular_signal[Give_up_size:-Give_up_size])#输出原图像
+plt.subplot(4, 1, 2)
+plt.ylabel("ECG baseline")
+plt.plot(ECG_baseline[Give_up_size:-Give_up_size])#输出基线轮廓
+plt.subplot(4, 1, 3)
+plt.ylabel("Filtered ECG signal")
+plt.plot(Final_Filtered_ECG)#基线滤波结果
+plt.subplot(4, 1, 4)
+plt.ylabel("Filtered ECG signal baseline")
+Filtered_ECG_signal_baseline = medfilt(Filtered_ECG, fliter+1)
+plt.plot(Filtered_ECG_signal_baseline[Give_up_size:-Give_up_size])#基线滤波结果
+
+3、在我做心电的过程中，观察了一下心电相关的去噪方法
+国内主要集中在应用中值滤波和小波变换，国外一般直接用巴特沃斯滤波器
+巴特沃斯滤波器是心电信号滤波最好用的滤波器，一个低频的高通滤波器可以去除基线漂移具体效果可以跟上述的中频滤波进行对比
+发现更好用一点（？）
+巴特沃斯的低通滤波还可以用于去除工频干扰，也就是去除信号的高频部分，让信号变得平滑
+所以可以直接选择带通滤波同时去除工频干扰以及基线漂移
+
+
+上面的巴特沃斯基本上就能解决问题，用小波其实也没什么大的提升
+只是看论文的时候发现很多人在进行数据预处理的时候都会采用小波滤波
+但所有的论文里都没有滤波方法选用小波和选用其他方法的对比
+根据实践操作也没什么提升，所以直接选用巴特沃斯滤波算了
+
+4、小波滤波
